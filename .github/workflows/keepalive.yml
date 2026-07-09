@@ -1,0 +1,32 @@
+# Giữ project Supabase (gói free) không bị tạm dừng do 7 ngày không hoạt động.
+# Chạy tự động mỗi ngày: ghi 1 dòng nhỏ vào bảng app_config -> tính là "hoạt động DB".
+#
+# CÁCH DÙNG:
+#  1) Trong repo GitHub cbc-dashboard-Public-Create, tạo thư mục: .github/workflows/
+#  2) Đặt file này vào đó, đổi tên thành: keepalive.yml
+#  3) Commit/push. Vào tab "Actions" của repo -> workflow sẽ chạy theo lịch (và bấm "Run workflow" để chạy thử ngay).
+#
+# Lưu ý: GitHub tắt lịch workflow nếu repo không có commit trong 60 ngày -> chỉ cần thỉnh thoảng có commit là ổn.
+
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    - cron: '0 2 * * *'      # chạy mỗi ngày lúc 02:00 UTC (09:00 giờ VN)
+  workflow_dispatch: {}        # cho phép bấm chạy tay trong tab Actions
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase (write keepalive row)
+        run: |
+          NOW=$(date -u +%FT%TZ)
+          curl -sS -X POST \
+            "https://kduodmhgnyynwpxudbml.supabase.co/rest/v1/app_config?on_conflict=key" \
+            -H "apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkdW9kbWhnbnl5bndweHVkYm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MDg2NzgsImV4cCI6MjA5Njk4NDY3OH0.nMiJknrd3hZtDnwSTOAx0v5ON14zZGDWt8HjyOAVFS8" \
+            -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtkdW9kbWhnbnl5bndweHVkYm1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MDg2NzgsImV4cCI6MjA5Njk4NDY3OH0.nMiJknrd3hZtDnwSTOAx0v5ON14zZGDWt8HjyOAVFS8" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"key\":\"keepalive\",\"value\":\"$NOW\",\"updated_at\":\"$NOW\"}"
+          echo "Keep-alive sent at $NOW"
