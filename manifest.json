@@ -1,0 +1,52 @@
+{
+  "name": "CBC Construction — Cost Dashboard Pro",
+  "short_name": "CBC Cost",
+  "description": "Hệ thống quản lý chi phí, tiến độ và hồ sơ công trường của CBC Construction.",
+  "lang": "vi",
+  "dir": "ltr",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "cbc-cost-dashboard",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#38BDF8",
+  "background_color": "#0B1219",
+  "categories": ["business", "productivity", "finance"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Tổng quan dự án",
+      "short_name": "Tổng quan",
+      "url": "./index.html#ov"
+    },
+    {
+      "name": "Chi phí & Ngân sách",
+      "short_name": "Chi phí",
+      "url": "./index.html#bg"
+    },
+    {
+      "name": "Dòng tiền",
+      "short_name": "Dòng tiền",
+      "url": "./index.html#cf"
+    }
+  ]
+}

@@ -10339,7 +10339,7 @@ function mrSave(){
 /* ═══════════════════════════════════════════════════════════════════════
    v24 · 16/09/2026 — SỐ BẢN HIỆN TRÊN MÀN HÌNH, VÀ ÉP LƯU KHI RỜI TRANG
    ═══════════════════════════════════════════════════════════════════════ */
-var APP_BAN = 'v24 · 16/09/2026';
+var APP_BAN = 'v26 · 16/09/2026';
 window.APP_BAN = APP_BAN;
 (function(){
   function dong(){
@@ -15802,9 +15802,17 @@ function tcParseWB(wb,proj0){
         if(sect==='po'){
           // STT | Số PO | Ngày | Nội dung | Giá trị | Trạng thái | Ghi chú
           var amt=tcNum(r[4]); var no=String(r[1]||'').trim();
+          var mota=String(r[3]||'');
+          /* v25 — có file ghi mã VO vào cột "Nội dung" thay vì cột "Số PO".
+             Kéo về đúng chỗ ngay lúc đọc, không thì khoá chống trùng thành
+             rỗng và cả phiếu bị thêm lại lần nữa. */
+          if(!no && typeof _tcMaPS==='function'){
+            var _ma=_tcMaPS(mota);
+            if(_ma){ no=_ma; mota=''; }
+          }
           if(!amt&&!no) return;
           var st=String(r[5]||'').trim()||'Đã duyệt';
-          o.poList.push({stt:r[0],no:no,date:tcDate(r[2]),desc:String(r[3]||''),amt:amt,status:st,note:String(r[6]||'')});
+          o.poList.push({stt:r[0],no:no,date:tcDate(r[2]),desc:mota,amt:amt,status:st,note:String(r[6]||'')});
           if(st.indexOf('Đã')>=0) o.poApproved+=amt; else o.poPending+=amt;
         } else {
           // Mẫu MỚI (có mục "CÁC ĐỢT ĐÃ THU"): giá trị ở cột E(4)
@@ -16679,8 +16687,114 @@ function tcStartBlank(proj){
 function _tcKeyTxt(s){ return String(s||'').toLowerCase().replace(/\s+/g,' ').trim(); }
 function _tcKeyNum(n){ return Math.round((+n||0)*100)/100; }
 /* Khóa nhận dạng TRÙNG cho từng loại bản ghi */
-function tcKeyPO(r){   return 'po|'+_tcKeyTxt(r.no); }
-function tcKeyInst(r){ return 'in|'+_tcKeyTxt(r.date)+'|'+_tcKeyNum(r.amt); }
+/* ═══ v25 · 16/09/2026 — PO PHÁT SINH BỊ NHÂN ĐÔI KHI NẠP EXCEL ═══════════
+   Dự án FORD có 18 dòng PO trong khi thực tế chỉ có 9 (VO01..VO09):
+     · 9 dòng đầu : Số PO = "VO01".., Nội dung = "Đã thanh toán"
+     · 9 dòng sau : Số PO = TRỐNG,    Nội dung = "VO01"..
+   Tổng "Đã duyệt" cộng CẢ HAI nhóm nên giá trị hợp đồng bị thổi lên
+   725.934,47 thay vì khoảng 679.966 — lệch gần 46 nghìn.
+
+   VÌ SAO: khoá chống trùng của PO là tcKeyPO = 'po|' + số PO, CHỈ CÓ THẾ.
+   Một trong hai file Excel ghi mã VO vào cột "Nội dung" (cột D) thay vì cột
+   "Số PO" (cột B). App đọc ra 9 dòng có số PO RỖNG -> khoá thành 'po|' -> không
+   khớp dòng nào đang có -> thêm mới cả 9. Không một lời cảnh báo.
+
+   VÁ BA TẦNG:
+     ① lúc đọc Excel: mã nằm nhầm ở cột Nội dung thì chuyển về đúng cột Số PO
+     ② khoá: số PO rỗng thì lấy mã dò được trong Nội dung; vẫn rỗng thì kèm
+       cả nội dung và số tiền, để hai dòng khác nhau không bị gộp nhầm
+     ③ tcSoatPO() trong Console: liệt kê các cặp nghi trùng đang có sẵn
+   ══════════════════════════════════════════════════════════════════════ */
+/* Dò mã phát sinh trong một chuỗi: VO01 · VO-1 · PO 12 · CO03 · PS5 */
+function _tcMaPS(s){
+  var m = String(s == null ? '' : s).trim()
+            .match(/^\s*(VO|PO|CO|PS)\s*[-.]?\s*0*(\d{1,3})\s*$/i);
+  return m ? (m[1].toUpperCase() + (m[2].length < 2 ? '0' + m[2] : m[2])) : '';
+}
+window._tcMaPS = _tcMaPS;
+
+function tcKeyPO(r){
+  var no = _tcKeyTxt(r.no);
+  if(!no) no = _tcKeyTxt(_tcMaPS(r.desc));          // mã nằm nhầm ở cột Nội dung
+  if(no) return 'po|' + no;
+  /* Không có mã ở đâu cả: kèm nội dung và số tiền. Nếu chỉ khoá theo số tiền
+     thì hai khoản phát sinh khác nhau mà cùng giá trị sẽ bị gộp làm một. */
+  return 'po|?|' + _tcKeyTxt(r.desc) + '|' + _tcKeyNum(r.amt);
+}
+
+/* Soát các dòng PO nghi trùng đang có sẵn trong app. Chỉ LIỆT KÊ, không tự
+   xoá — hai bản có thể lệch số (FORD: VO09 ghi -7.340,00 và -6.901,34) nên
+   phải người xem mới biết bản nào đúng. Gõ tcSoatPO() trong Console. */
+function tcSoatPO(proj){
+  var T = window.THUCHI || {};
+  var ds = proj ? [proj] : Object.keys(T);
+  var tong = 0;
+  ds.forEach(function(p){
+    var L = ((T[p] || {}).poList) || [];
+    if(!L.length) return;
+    var theo = {};
+    L.forEach(function(r, i){
+      var ma = _tcKeyTxt(r.no) || _tcKeyTxt(_tcMaPS(r.desc));
+      if(!ma) return;
+      (theo[ma] = theo[ma] || []).push({ i: i, r: r });
+    });
+    var trung = Object.keys(theo).filter(function(k){ return theo[k].length > 1; });
+    if(!trung.length) return;
+    tong += trung.length;
+    console.log('%c[' + p + '] ' + trung.length + ' mã phát sinh xuất hiện nhiều lần',
+                'font-weight:700;color:#e64a19');
+    var bang = [];
+    trung.forEach(function(k){
+      theo[k].forEach(function(x){
+        bang.push({ ma: k.toUpperCase(), dong: x.i + 1, soPO: x.r.no || '(trống)',
+                    noiDung: String(x.r.desc || '').slice(0, 30),
+                    giaTri: x.r.amt, trangThai: x.r.status, nguon: x.r.src || 'nhap tay' });
+      });
+    });
+    try{ console.table(bang); }catch(e){ console.log(bang); }
+  });
+  if(!tong) console.log('[PO] Không thấy mã phát sinh nào bị lặp.');
+  else console.log('[PO] Xoá dòng thừa bằng nút 🗑 ở Module 03 — xem kỹ giá trị '
+                 + 'trước khi xoá, hai bản có thể lệch số.');
+  return tong;
+}
+window.tcSoatPO = tcSoatPO;
+/* ═══ v26 · 16/09/2026 — MỖI LẦN UPLOAD TEMPLATE LÀ GIÁ TRỊ LẠI CỘNG DỒN ═══
+   Màn hình Module 01: FORD "CĐT đã thanh toán 1,9M — 263,4% của HĐ 726K · 15
+   đợt"; HJ-PROJECT "2,5M — 172,2% của HĐ 1,4M · 4 đợt". Đã thu gấp 2–3 lần
+   hợp đồng là chuyện không thể có thật.
+
+   TRUY RA: mở _mau_template/CBC_TEMPLATE_FORD_v2_2026-09-02.xlsx, mục "CÁC
+   ĐỢT ĐÃ THU" chỉ có ĐÚNG MỘT dòng:
+       ĐỢT 1 · 2026-08-24 · "Lũy kế đã thu từ chủ đầu tư" · 634.430,39
+   Đó là con số LUỸ KẾ, không phải một đợt thu riêng. Nhưng app cộng mọi dòng
+   inst lại như thể mỗi dòng là một đợt.
+
+   Cộng thêm: khoá chống trùng của đợt thu là ngày + số tiền. Mỗi lần xuất
+   template, luỹ kế lại nhích lên một chút -> khoá khác -> THÊM DÒNG MỚI thay
+   vì thay dòng cũ. Upload 15 lần thành 15 đợt, cộng lại ra 263% hợp đồng.
+
+   VÁ HAI TẦNG:
+     ① dòng luỹ kế dùng CHUNG MỘT KHOÁ, không kèm ngày và số tiền — nạp lần
+       sau là THAY, không thêm
+     ② "lấy đúng theo file" nay áp cho cả đợt thu và PO, không riêng nhật ký
+       thanh toán như trước. Dòng nhập tay vẫn luôn được giữ.
+   ══════════════════════════════════════════════════════════════════════ */
+/* Dòng ghi số LUỸ KẾ chứ không phải một đợt riêng lẻ */
+function tcLaLuyKe(s){
+  var t = _tcKeyTxt(s);
+  return t.indexOf('lũy kế') >= 0 || t.indexOf('luy ke') >= 0
+      || t.indexOf('lũy kê') >= 0 || t.indexOf('cumulative') >= 0
+      || t.indexOf('accumulated') >= 0;
+}
+window.tcLaLuyKe = tcLaLuyKe;
+
+function tcKeyInst(r){
+  /* Mỗi dự án chỉ có MỘT con số luỹ kế. Khoá cố định để lần nạp sau thay
+     đúng dòng đó, dù ngày hay số tiền đã đổi. */
+  if(tcLaLuyKe(r && r.desc)) return 'in|luyke';
+  return 'in|'+_tcKeyTxt(r.date)+'|'+_tcKeyNum(r.amt);
+}
 function tcKeyPay(r){
   // Trùng khi: cùng ngày + cùng người nhận + cùng số tiền nguyên tệ
   return 'pa|'+_tcKeyTxt(r.date)+'|'+_tcKeyTxt(r.vendor)+'|'+_tcKeyNum(r.goc);
@@ -16714,19 +16828,33 @@ function tcMergeList(cur,inc,keyFn){
    (bản cũ đọc lệch cột) là sổ lại có thêm một bộ dòng "không trùng", mà luật
    gộp thì giữ nguyên dòng không trùng -> nạp vài lần là tổng chi gấp đôi.
    Dòng anh TỰ NHẬP trong app (src='man') không bị tính là thừa. */
-function tcSoThua(d,o){
-  var cu=(d&&d.payments)||[], inc=(o&&o.payments)||[];
+/* v26 — đếm dòng thừa cho MỘT danh sách bất kỳ. Trước đây chỉ làm cho
+   payments, nên đợt thu và PO cứ chồng lên nhau mãi. */
+function _tcThuaMot(cu,inc,keyFn){
+  cu=Array.isArray(cu)?cu:[]; inc=Array.isArray(inc)?inc:[];
   var khoaFile={};
-  inc.forEach(function(x){ khoaFile[tcKeyPay(x)]=(khoaFile[tcKeyPay(x)]||0)+1; });
+  inc.forEach(function(x){ var k=keyFn(x); khoaFile[k]=(khoaFile[k]||0)+1; });
   var dung={}, thua=[];
   cu.forEach(function(x){
     if(String(x.src||'')==='man') return;           // dòng nhập tay luôn giữ
-    var k=tcKeyPay(x);
+    var k=keyFn(x);
     dung[k]=(dung[k]||0)+1;
     if(dung[k]>(khoaFile[k]||0)) thua.push(x);      // vượt số bản có trong file
   });
-  return {thua:thua, tien:thua.reduce(function(s,x){return s+(+x.amt||0);},0),
-          soCu:cu.length, soFile:inc.length};
+  return thua;
+}
+
+function tcSoThua(d,o){
+  d=d||{}; o=o||{};
+  var tPay =_tcThuaMot(d.payments, o.payments, tcKeyPay);
+  var tInst=_tcThuaMot(d.inst,     o.inst,     tcKeyInst);
+  var tPo  =_tcThuaMot(d.poList,   o.poList,   tcKeyPO);
+  var het=tPay.concat(tInst).concat(tPo);
+  return {thua:tPay,                       // giữ tên cũ: chỉ nhật ký thanh toán
+          thuaInst:tInst, thuaPo:tPo, thuaHet:het,
+          tien:het.reduce(function(s,x){return s+(+x.amt||0);},0),
+          tienPay:tPay.reduce(function(s,x){return s+(+x.amt||0);},0),
+          soCu:(d.payments||[]).length, soFile:(o.payments||[]).length};
 }
 window.tcSoThua=tcSoThua;
 /* Gộp cả sổ Thu/Chi. o = kết quả tcParseWB
@@ -16737,25 +16865,34 @@ function tcMergeInto(proj,o,cheDo){
   var d=tcEnsure(proj);
   var st={po:null,inst:null,pay:null,base:'',boThua:0,tienThua:0};
   var TH=tcSoThua(d,o);
-  if(TH.thua.length){
+  if(TH.thuaHet.length){
     var lay=cheDo;
     if(lay!=='file'&&lay!=='gop'){
       var _t=function(x){ return (typeof tcFmt==='function')?tcFmt(x):x; };
+      var _ph=[];
+      if(TH.thua.length)     _ph.push(TH.thua.length+' khoản chi');
+      if(TH.thuaInst.length) _ph.push(TH.thuaInst.length+' đợt thu');
+      if(TH.thuaPo.length)   _ph.push(TH.thuaPo.length+' PO phát sinh');
       lay=(typeof confirm==='function'&&confirm(
-        'NHẬT KÝ THANH TOÁN — '+proj+'\n\n'+
-        'File template có   : '+TH.soFile+' khoản\n'+
-        'Sổ trong app đang có: '+TH.soCu+' khoản\n\n'+
-        'Có '+TH.thua.length+' khoản trong sổ KHÔNG có trong file, tổng '+_t(TH.tien)+' USD.\n'+
-        'Thường là do lần nạp trước app đọc lệch cột nên sinh ra bản dư.\n\n'+
-        'OK      = LẤY ĐÚNG THEO FILE (bỏ '+TH.thua.length+' khoản dư, dòng anh nhập tay vẫn giữ)\n'+
-        'Cancel  = GIỮ CẢ HAI (như trước)'
+        'NẠP TEMPLATE — '+proj+'\n\n'+
+        'Trong sổ app có '+_ph.join(', ')+' KHÔNG có trong file,\n'+
+        'tổng '+_t(TH.tien)+' USD.\n\n'+
+        'Thường là do những lần nạp trước cộng dồn lại: mỗi lần nạp một bản\n'+
+        'template mới, con số luỹ kế nhích lên một chút nên app tưởng là đợt\n'+
+        'thu mới và thêm dòng, thay vì thay dòng cũ.\n\n'+
+        'OK      = LẤY ĐÚNG THEO FILE (bỏ '+TH.thuaHet.length+' dòng dư,\n'+
+        '          dòng anh nhập tay trong app vẫn giữ nguyên)\n'+
+        'Cancel  = GIỮ CẢ HAI (như trước — số sẽ tiếp tục cộng dồn)'
       ))?'file':'gop';
     }
     if(lay==='file'){
-      var bo=[]; TH.thua.forEach(function(x){ bo.push(x); });
-      d.payments=(d.payments||[]).filter(function(x){ return bo.indexOf(x)<0; });
-      st.boThua=bo.length; st.tienThua=TH.tien;
-      if(typeof auditGhi==='function') auditGhi('NAP_THEO_FILE','tc',proj,{bo:bo.length,tien:TH.tien});
+      d.payments=(d.payments||[]).filter(function(x){ return TH.thua.indexOf(x)<0; });
+      d.inst    =(d.inst    ||[]).filter(function(x){ return TH.thuaInst.indexOf(x)<0; });
+      d.poList  =(d.poList  ||[]).filter(function(x){ return TH.thuaPo.indexOf(x)<0; });
+      st.boThua=TH.thuaHet.length; st.tienThua=TH.tien;
+      if(typeof auditGhi==='function') auditGhi('NAP_THEO_FILE','tc',proj,
+        {bo:TH.thuaHet.length, chi:TH.thua.length, dot:TH.thuaInst.length,
+         po:TH.thuaPo.length, tien:TH.tien});
     }
   }
   // ① Hợp đồng gốc: template luôn thắng nếu file có ghi
