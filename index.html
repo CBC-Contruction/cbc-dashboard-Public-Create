@@ -10616,7 +10616,7 @@ function mrSave(){
 /* ═══════════════════════════════════════════════════════════════════════
    v24 · 16/09/2026 — SỐ BẢN HIỆN TRÊN MÀN HÌNH, VÀ ÉP LƯU KHI RỜI TRANG
    ═══════════════════════════════════════════════════════════════════════ */
-var APP_BAN = 'v27 · 17/09/2026';
+var APP_BAN = 'v28 · 17/09/2026';
 window.APP_BAN = APP_BAN;
 (function(){
   function dong(){
@@ -16535,6 +16535,174 @@ window.tcInNum=tcInNum;
    Khối script này KHÔNG có hàm esc() dùng chung (esc chỉ có trong khối v2). */
 function tcEsc(x){ return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 window.tcEsc=tcEsc;
+/* ═══════════════════════════════════════════════════════════════════════════
+   v28 · 17/09/2026 — DỌN DÒNG ĐÃ BỊ GHI CHỒNG
+   ───────────────────────────────────────────────────────────────────────────
+   Người dùng hỏi vì sao hai con số này vẫn sai:
+       FORD       "CĐT đã thanh toán $1.9M — 263,4% của HĐ $726K · 15 đợt"
+       HJ-PROJECT "$2.5M — 172,2% của HĐ $1.4M · 4 đợt"
+
+   NGUỒN CỦA HAI CON SỐ (tcRecalcAll):
+       d.poApproved = cộng MỌI dòng poList có trạng thái "Đã ..."
+       d.contract   = baseContract + poApproved          -> ra $726K
+       d.collected  = cộng MỌI dòng inst                 -> ra $1.9M
+       thẻ hiện     = collected / contract               -> 263,4%
+   Hai danh sách đó nằm ở Supabase: thuchi_po và thuchi_installments, cùng bản
+   sao trong khối app_config.thuchi_data.
+
+   VÌ SAO VẪN SAI SAU KHI ĐÃ VÁ: v25 và v26 chỉ CHẶN KHÔNG CHO SINH THÊM dòng
+   trùng ở những lần nạp sau. Chúng không đụng tới những dòng đã nằm sẵn trong
+   máy chủ từ các lần nạp trước. Muốn số về đúng thì phải dọn — đó là việc của
+   hàm này.
+
+   NGUYÊN TẮC DỌN — chỉ làm những gì chắc chắn đúng:
+     · Đợt thu ghi số LUỸ KẾ: mỗi dự án chỉ được có MỘT. Giữ con số LỚN NHẤT
+       (bản luỹ kế mới nhất), bỏ các bản cũ hơn.
+     · PO phát sinh trùng mã: giữ MỘT dòng cho mỗi mã. Ưu tiên dòng có điền
+       "Số PO"; nếu cả hai đều có thì giữ dòng đứng sau (bản nạp gần đây nhất).
+     · KHÔNG đụng tới dòng anh nhập tay (src='man') và không đụng đợt thu
+       thường (không phải luỹ kế) — những thứ đó không có cách nào biết chắc.
+
+   Luôn xem trước rồi mới hỏi. Không tự xoá.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function _dtSo(x){ var n = parseFloat(x); return isFinite(n) ? n : 0; }
+
+/* Soát một dự án, trả về những gì SẼ bỏ — không sửa gì cả. */
+function tcSoatChong(proj){
+  var d = (window.THUCHI || {})[proj];
+  if(!d) return null;
+  var boPo = [], boIn = [];
+
+  // ── PO trùng mã ──
+  var theo = {};
+  (d.poList || []).forEach(function(r, i){
+    if(String(r.src || '') === 'man') return;          // nhập tay: không đụng
+    var k = (typeof tcKeyPO === 'function') ? tcKeyPO(r) : ('po|' + (r.no || ''));
+    (theo[k] = theo[k] || []).push({ i: i, r: r });
+  });
+  Object.keys(theo).forEach(function(k){
+    var ds = theo[k];
+    if(ds.length < 2) return;
+    /* CHỌN DÒNG NÀO GIỮ LẠI — quy tắc: giữ dòng có SỐ LẺ HƠN.
+       Bản tròn số hầu như luôn là bản chép lại hoặc gõ lại; bản lẻ mới mang
+       con số gốc. Kiểm được trên FORD: mẫu gốc của công ty ghi
+       ② CỘNG PO PHÁT SINH = 45.968,309545… tức bộ số lẻ (VO09 = −6.901,335),
+       không phải bộ tròn (−7.340,00).
+       Bằng nhau thì giữ dòng có điền Số PO, rồi mới tới dòng cuối. */
+    var _le = function(r){
+      var t = String(r.amt == null ? '' : r.amt), q = t.indexOf('.');
+      return q < 0 ? 0 : (t.length - q - 1);
+    };
+    var giu = ds[0];
+    ds.forEach(function(x){
+      var a = _le(x.r), b = _le(giu.r);
+      if(a > b) giu = x;
+      else if(a === b && String(x.r.no || '').trim() && !String(giu.r.no || '').trim()) giu = x;
+    });
+    /* Dòng giữ lại mà trống "Số PO" thì kéo mã từ cột Nội dung về đúng chỗ.
+       Những dòng này nạp từ trước v25 nên còn ở dạng cũ; để nguyên thì bảng
+       hiện dấu "—" ở cột Số PO và lần sau lại không khớp khoá. */
+    if(!String(giu.r.no || '').trim() && typeof _tcMaPS === 'function'){
+      var _ma = _tcMaPS(giu.r.desc);
+      if(_ma){ giu.r.no = _ma; giu.r.desc = ''; }
+    }
+    ds.forEach(function(x){ if(x !== giu) boPo.push(x.r); });
+  });
+
+  // ── Đợt thu LUỸ KẾ: chỉ được có một ──
+  var lk = (d.inst || []).filter(function(r){
+    return String(r.src || '') !== 'man'
+        && (typeof tcLaLuyKe === 'function') && tcLaLuyKe(r.desc);
+  });
+  if(lk.length > 1){
+    var giuIn = lk[0];
+    lk.forEach(function(r){ if(_dtSo(r.amt) > _dtSo(giuIn.amt)) giuIn = r; });
+    lk.forEach(function(r){ if(r !== giuIn) boIn.push(r); });
+  }
+
+  if(!boPo.length && !boIn.length) return null;
+
+  var hd0 = _dtSo(d.contract), thu0 = _dtSo(d.collected);
+  var boPoTien = boPo.reduce(function(s, r){
+    return s + (String(r.status || '').indexOf('Đã') >= 0 ? _dtSo(r.amt) : 0); }, 0);
+  var boInTien = boIn.reduce(function(s, r){ return s + _dtSo(r.amt); }, 0);
+  return { proj: proj, boPo: boPo, boIn: boIn,
+           hdCu: hd0, hdMoi: hd0 - boPoTien,
+           thuCu: thu0, thuMoi: thu0 - boInTien };
+}
+
+/* Dọn — xem trước, hỏi, rồi mới làm. Gõ tcDonChong() trong Console,
+   hoặc tcDonChong('FORD') cho riêng một dự án. */
+function tcDonChong(proj){
+  var T = window.THUCHI || {};
+  var ds = proj ? [proj] : Object.keys(T);
+  var bc = [];
+  ds.forEach(function(p){ var x = tcSoatChong(p); if(x) bc.push(x); });
+
+  if(!bc.length){
+    console.log('[dọn chồng] Không thấy dòng nào bị ghi chồng.');
+    if(window.showToast) showToast('✓ Không có dòng nào bị ghi chồng','g',4000);
+    return 0;
+  }
+
+  var _V = (typeof V === 'function') ? V : function(x){ return String(x); };
+  var mo = 'DỌN DÒNG ĐÃ BỊ GHI CHỒNG\n\n';
+  bc.forEach(function(x){
+    mo += x.proj + '\n';
+    if(x.boPo.length) mo += '   bỏ ' + x.boPo.length + ' dòng PO trùng mã\n';
+    if(x.boIn.length) mo += '   bỏ ' + x.boIn.length + ' đợt thu luỹ kế cũ\n';
+    mo += '   hợp đồng : ' + _V(x.hdCu)  + '  ->  ' + _V(x.hdMoi) + '\n';
+    mo += '   đã thu   : ' + _V(x.thuCu) + '  ->  ' + _V(x.thuMoi) + '\n\n';
+  });
+  mo += 'Cách chọn dòng giữ lại: giữ dòng có SỐ LẺ HƠN — bản tròn số hầu như\n';
+  mo += 'luôn là bản chép lại. Xem bảng chi tiết trong Console (F12) trước khi\n';
+  mo += 'đồng ý; thấy giữ nhầm thì bấm Cancel.\n\n';
+  mo += 'Dòng anh NHẬP TAY và đợt thu thường đều giữ nguyên.\n';
+  mo += 'Nên chạy 1-SAO-LUU.bat trước cho chắc.\n\n';
+  mo += 'OK = dọn · Cancel = để nguyên';
+
+  console.log('%c[dọn chồng] xem trước', 'font-weight:700;color:#e64a19');
+  bc.forEach(function(x){
+    console.log('  ' + x.proj + ': bỏ ' + x.boPo.length + ' PO, ' + x.boIn.length + ' đợt thu');
+    try{
+      if(x.boPo.length) console.table(x.boPo.map(function(r){
+        return { soPO: r.no || '(trống)', noiDung: String(r.desc || '').slice(0, 28),
+                 giaTri: r.amt, trangThai: r.status }; }));
+      if(x.boIn.length) console.table(x.boIn.map(function(r){
+        return { ngay: r.date, noiDung: String(r.desc || '').slice(0, 34), soTien: r.amt }; }));
+    }catch(e){}
+  });
+
+  if(typeof confirm === 'function' && !confirm(mo)){
+    console.log('[dọn chồng] Đã huỷ, không sửa gì.');
+    return 0;
+  }
+
+  var tong = 0;
+  bc.forEach(function(x){
+    var d = T[x.proj];
+    if(x.boPo.length) d.poList = (d.poList || []).filter(function(r){ return x.boPo.indexOf(r) < 0; });
+    if(x.boIn.length) d.inst   = (d.inst   || []).filter(function(r){ return x.boIn.indexOf(r) < 0; });
+    tong += x.boPo.length + x.boIn.length;
+    try{ if(typeof tcRecalcAll === 'function') tcRecalcAll(d); }catch(e){}
+    try{ if(typeof auditGhi === 'function') auditGhi('DON_GHI_CHONG','tc',x.proj,
+           { po: x.boPo.length, dot: x.boIn.length,
+             hdCu: x.hdCu, hdMoi: x.hdMoi, thuCu: x.thuCu, thuMoi: x.thuMoi }); }catch(e){}
+  });
+
+  try{ if(typeof tcSave === 'function') tcSave(); }catch(e){}
+  try{ if(typeof tcRefresh === 'function') tcRefresh(); }catch(e){}
+  try{ if(typeof renderOV === 'function') renderOV(); }catch(e){}
+
+  console.log('[dọn chồng] Đã bỏ ' + tong + ' dòng trên ' + bc.length + ' dự án.');
+  if(window.showToast) showToast('✅ Đã dọn ' + tong + ' dòng ghi chồng trên '
+      + bc.length + ' dự án — số đã tính lại','g',7000);
+  return tong;
+}
+window.tcSoatChong = tcSoatChong;
+window.tcDonChong = tcDonChong;
+
 /* Tính lại toàn bộ số tổng của một sổ Thu/Chi */
 function tcRecalcAll(d){
   if(!d) return;
