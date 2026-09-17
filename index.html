@@ -765,6 +765,7 @@ table td { font-variant-numeric: tabular-nums; }
       </div>
     </div>
     <button onclick="exportDataJSON()" title="Sao lưu toàn bộ dữ liệu ra file JSON" style="flex:1;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;color:var(--c2);font-size:10px;padding:5px 4px;cursor:pointer;font-family:Arial">💾 Sao lưu</button>
+    <button onclick="slSaoLuuTemplate()" title="Sao lưu ra TEMPLATE EXCEL — mỗi dự án một file, tên kèm ngày giờ nên không ghi đè bản cũ. Mở bằng Excel xem/sửa được rồi nạp ngược vào app." style="width:100%;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;color:var(--c5);font-size:10px;padding:5px 4px;cursor:pointer;font-family:Arial;margin-bottom:2px">📗 Sao lưu ra Template</button>
       <label for="json-import-inp" title="Khôi phục dữ liệu từ file JSON" style="flex:1;background:var(--bg3);border:1px solid var(--bd);border-radius:5px;color:var(--c1);font-size:10px;padding:5px 4px;cursor:pointer;text-align:center;font-family:Arial">📂 Khôi phục</label>
       <input type="file" id="json-import-inp" accept=".json" style="display:none" onchange="importDataJSON(event)">
     </div>
@@ -5322,6 +5323,282 @@ function bkBuild(){
   return data;
 }
 window.bkBuild=bkBuild;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v27 · 17/09/2026 — SAO LƯU RA TEMPLATE, BẤM NGAY TRONG APP
+   ───────────────────────────────────────────────────────────────────────────
+   Người dùng yêu cầu: bấm một nút là tự sinh template cho TỪNG dự án, mỗi lần
+   một bản mới, không bao giờ ghi đè.
+
+   Khác bản sao lưu JSON: file này MỞ RA XEM ĐƯỢC bằng Excel, sửa tay được,
+   rồi nạp ngược vào app. Đó là lý do tồn tại của nó — cứu một con số nhập sai
+   mà không phải khôi phục toàn bộ.
+
+   ĐIỀU PHẢI NÓI RÕ: thư viện Excel chạy trong trình duyệt (SheetJS bản cộng
+   đồng) KHÔNG ghi được màu nền, phông chữ, viền ô. File sinh ra ở đây đúng số
+   và đúng cấu trúc — nạp ngược lại được — nhưng TRẮNG TRƠN. Muốn bản giữ
+   nguyên định dạng của công ty thì chạy 9-SAO-LUU-TEMPLATE.bat, nó lấy mẫu
+   gốc làm khung.
+
+   Cấu trúc từng sheet chép đúng mẫu gốc của công ty, vì chính bộ nạp của app
+   dò theo những tiêu đề đó. Sai một chữ là nạp ngược không vào.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function slMoc(){
+  var d = new Date(), p = function(n){ return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate())
+       + '_' + p(d.getHours()) + p(d.getMinutes());
+}
+function slSo(x){ var n = parseFloat(x); return isFinite(n) ? n : 0; }
+function slChu(x){ return String(x == null ? '' : x); }
+
+/* Danh sách dự án lấy từ MỌI nguồn — dự án mới upload chưa kịp vào PROJECTS
+   vẫn phải được sao lưu. */
+function slDanhSachDuAn(){
+  var s = {};
+  try{ (typeof PROJECTS !== 'undefined' ? PROJECTS : []).forEach(function(p){ if(p && p.code) s[p.code] = 1; }); }catch(e){}
+  try{ Object.keys(window.THUCHI || {}).forEach(function(k){ if(k) s[k] = 1; }); }catch(e){}
+  try{ Object.keys(typeof SAMPLE_BUD !== 'undefined' ? SAMPLE_BUD : {}).forEach(function(k){
+         if(k.indexOf(':') > 0) s[k.split(':')[0]] = 1; }); }catch(e){}
+  return Object.keys(s).filter(Boolean).sort();
+}
+
+/* ── BOQ_MASTER: cây BOQ + ngân sách + khối lượng ───────────────────────── */
+function slBangBOQ(proj){
+  var A = [['CBC — BOQ MASTER · ' + proj],
+           ['MÃ DỰ ÁN','STT','LV','CODE','ABBR ★','TÊN HẠNG MỤC (VI)','DESCRIPTION (EN)','ĐVT',
+            'NS GXD','NS BID ★','VO','TỔNG NS','KLHD ★','DGHD ★','KLTT (đã dùng)','% HT',
+            'THÀNH TIỀN','CP THỰC TẾ','VẬT TƯ (Material)','NHÂN CÔNG (Labor)']];
+  var tree = (typeof getBOQ === 'function') ? (getBOQ() || []) : [];
+  var bud  = (typeof SAMPLE_BUD !== 'undefined') ? SAMPLE_BUD : {};
+  var gxd  = window.SAMPLE_GXD || {};
+  var vo   = window.SAMPLE_VO || {};
+  var prog = window.SAMPLE_PROGRESS || {};
+  var stt = 0, coDong = 0;
+
+  tree.forEach(function(g){
+    A.push(['', '', 0, slChu(g.code), slChu(g.abbr), slChu(g.vi), slChu(g.en), '',
+            '','','','','','','','','','','','']);
+    (g.children || []).forEach(function(s){
+      A.push(['', '', 1, slChu(s.code), slChu(s.abbr), slChu(s.vi), slChu(s.en), '',
+              '','','','','','','','','','','','']);
+      (s.children || []).forEach(function(it){
+        var k  = proj + ':' + it.abbr;
+        var ns = slSo(bud[k]), g1 = slSo(gxd[k]), v1 = slSo(vo[k]);
+        var pr = prog[k] || {};
+        var klhd = slSo(pr.klhd), kltt = slSo(pr.kltt), dg = slSo(pr.dg);
+        var tt = (typeof getActualForAbbr === 'function') ? slSo(getActualForAbbr(it.abbr)) : 0;
+        /* Hạng mục không có số nào của dự án này thì bỏ — nếu không, template
+           của mỗi dự án đều kèm toàn bộ cây chung, đọc không ra đâu là của ai. */
+        if(!ns && !g1 && !v1 && !klhd && !kltt && !tt) return;
+        stt++; coDong++;
+        A.push([proj, stt, 2, slChu(it.code), slChu(it.abbr), slChu(it.vi), slChu(it.en),
+                slChu(it.unit), g1 || '', ns || '', v1 || '', (g1 + ns + v1) || '',
+                klhd || '', dg || '', kltt || '',
+                klhd > 0 ? Math.round(kltt / klhd * 1000) / 10 : '',
+                (dg && kltt) ? Math.round(dg * kltt * 100) / 100 : '',
+                tt || '', '', '']);
+      });
+    });
+  });
+  return coDong ? A : null;      // dự án chưa có BOQ thì không tạo sheet rỗng
+}
+
+/* ── TỔNG THU: hợp đồng · PO phát sinh · đợt thu ────────────────────────── */
+function slBangThu(proj){
+  var d = (window.THUCHI || {})[proj] || {};
+  var po = (d.poList || []), inst = (d.inst || []);
+  var hdGoc = slSo(d.baseContract) || slSo(d.contract);
+  var poDuyet = 0;
+  po.forEach(function(x){ if(slChu(x.status || 'Đã duyệt').indexOf('Đã') >= 0) poDuyet += slSo(x.amt); });
+  var daThu = 0; inst.forEach(function(x){ daThu += slSo(x.amt); });
+
+  var A = [['CBC — TỔNG THU / THEO DÕI HỢP ĐỒNG · ' + proj],
+           [],
+           ['① GIÁ TRỊ HỢP ĐỒNG GỐC (bên ngoài PO)','','','', hdGoc],
+           ['② CỘNG PO PHÁT SINH (chỉ tính đã duyệt)','','','', poDuyet],
+           ['③ TỔNG GIÁ TRỊ HỢP ĐỒNG  = ① + ②','','','', hdGoc + poDuyet],
+           ['④ ĐÃ THU LŨY KẾ','','','', daThu],
+           ['⑤ CÒN PHẢI THU  = ③ − ④','','','', hdGoc + poDuyet - daThu],
+           [],
+           ['PO / PHÁT SINH VỚI CHỦ ĐẦU TƯ'],
+           ['STT','SỐ PO','NGÀY','NỘI DUNG PHÁT SINH','GIÁ TRỊ (USD)','TRẠNG THÁI','GHI CHÚ']];
+  po.forEach(function(x, i){
+    A.push([i + 1, slChu(x.no), slChu(x.date), slChu(x.desc), slSo(x.amt),
+            slChu(x.status || 'Đã duyệt'), slChu(x.note)]);
+  });
+  A.push(['','','','TỔNG PO ĐÃ DUYỆT', poDuyet]);
+  A.push([]);
+  A.push(['CÁC ĐỢT ĐÃ THU TỪ CHỦ ĐẦU TƯ']);
+  A.push(['ĐỢT','','NGÀY','NỘI DUNG / DIỄN GIẢI','GIÁ TRỊ THU (USD)']);
+  var luy = 0;
+  inst.forEach(function(x, i){
+    luy += slSo(x.amt);
+    A.push([i + 1, '', slChu(x.date), slChu(x.desc), slSo(x.amt), luy,
+            hdGoc + poDuyet - luy]);
+  });
+  return A;
+}
+
+/* ── CHI TIẾT THANH TOÁN: nhật ký chi ───────────────────────────────────── */
+function slBangChi(proj){
+  var d = (window.THUCHI || {})[proj] || {};
+  var pay = d.payments || [];
+  if(!pay.length) return null;
+  var A = [['CBC — CHI TIẾT THANH TOÁN · ' + proj],
+           ['STT','NGÀY','HẠNG MỤC','LOẠI CHI','NCC / NGƯỜI NHẬN','NỘI DUNG','LOẠI TIỀN',
+            'SỐ TIỀN LAK','SỐ TIỀN USD','SỐ TIỀN THB','TỶ GIÁ (1 USD = ?)',
+            'QUY ĐỔI USD\n(trước thuế)','THUẾ %','TIỀN THUẾ (USD)','TỔNG THANH TOÁN (USD)',
+            'TRẠNG THÁI','GHI CHÚ']];
+  pay.forEach(function(x, i){
+    var cur = slChu(x.cur || 'USD').toUpperCase();
+    var goc = slSo(x.goc), amt = slSo(x.amt), thue = slSo(x.taxPct);
+    A.push([i + 1, slChu(x.date), slChu(x.item), slChu(x.kind), slChu(x.vendor),
+            slChu(x.desc), cur,
+            cur === 'LAK' ? goc : '', cur === 'USD' ? goc : '', cur === 'THB' ? goc : '',
+            slSo(x.fx) || 1, amt, thue || '', thue ? Math.round(amt * thue) / 100 : '',
+            amt, slChu(x.status), slChu(x.note)]);
+  });
+  return A;
+}
+
+/* ── AJC ĐÃ DUYỆT ───────────────────────────────────────────────────────── */
+function slBangAJC(proj){
+  var o = {};
+  try{ o = (window.AJC_BASE || {})[proj] || {}; }catch(e){}
+  if(!o || !Object.keys(o).length) return null;
+  var A = [['CBC — AJC ĐÃ DUYỆT · ' + proj],
+           ['BẢN AJC', slChu(o.rev)],
+           ['NGÀY DUYỆT', slChu(o.date)],
+           ['GIÁ TRỊ HỢP ĐỒNG', slSo(o.contract)],
+           [],
+           ['NHÓM CHI PHÍ','GIÁ TRỊ (USD)','TỶ TRỌNG %']];
+  var grp = o.groups || {}, tong = 0;
+  Object.keys(grp).forEach(function(k){ tong += slSo(grp[k]); });
+  Object.keys(grp).forEach(function(k){
+    A.push([k, slSo(grp[k]), tong ? Math.round(slSo(grp[k]) / tong * 1000) / 10 : 0]);
+  });
+  A.push(['TỔNG CỘNG', tong, 100]);
+  A.push([]);
+  A.push(['ĐỘI THI CÔNG','GIÁ TRỊ (USD)']);
+  var tm = o.teams || {};
+  Object.keys(tm).forEach(function(k){ A.push([k, slSo(tm[k])]); });
+  A.push([]);
+  A.push(['LOẠI TIỀN','TỶ GIÁ (1 USD = ?)']);
+  var fx = o.fx || {};
+  Object.keys(fx).forEach(function(k){ A.push([k, slSo(fx[k])]); });
+  return A;
+}
+
+/* ── NHÂN CÔNG THEO ĐỘI ─────────────────────────────────────────────────── */
+function slBangNhanCong(proj){
+  var ds = (window.LB_LIST || []).filter(function(x){ return x && x.projCode === proj; });
+  if(!ds.length) return null;
+  var A = [['CBC — NHÂN CÔNG THEO ĐỘI · ' + proj],
+           ['STT','ĐỘI / TỔ','ĐỢT','NGÀY','NỘI DUNG','SỐ TIỀN','LOẠI TIỀN','TRẠNG THÁI','GHI CHÚ']];
+  ds.forEach(function(x, i){
+    A.push([i + 1, slChu(x.team || x.doi), slChu(x.batch || x.dot), slChu(x.date),
+            slChu(x.desc), slSo(x.amt), slChu(x.cur || 'USD'),
+            slChu(x.status), slChu(x.note)]);
+  });
+  return A;
+}
+
+/* ── TỒN KHO VẬT TƯ ─────────────────────────────────────────────────────── */
+function slBangTonKho(proj){
+  var st = {};
+  try{ st = (window.MATERIAL_STOCK || {})[proj] || {}; }catch(e){}
+  var ks = Object.keys(st);
+  if(!ks.length) return null;
+  var A = [['CBC — TỒN KHO VẬT TƯ · ' + proj],
+           ['STT','TÊN VẬT TƯ','ĐVT','ĐÃ NHẬP','ĐÃ CẤP','TỒN','ĐƠN GIÁ','GIÁ TRỊ TỒN']];
+  ks.forEach(function(k, i){
+    var x = st[k] || {};
+    var nhap = slSo(x.in || x.nhap), cap = slSo(x.out || x.cap);
+    A.push([i + 1, slChu(x.name || k), slChu(x.unit), nhap, cap, nhap - cap,
+            slSo(x.price), Math.round((nhap - cap) * slSo(x.price) * 100) / 100]);
+  });
+  return A;
+}
+
+/* ── ĐỀ XUẤT VẬT TƯ ─────────────────────────────────────────────────────── */
+function slBangVatTu(proj){
+  var ds = (typeof MR_LIST !== 'undefined' ? MR_LIST : []).filter(function(x){
+    return x && x.projCode === proj;
+  });
+  if(!ds.length) return null;
+  var A = [['CBC — ĐỀ XUẤT VẬT TƯ · ' + proj],
+           ['PHIẾU YCVT','STT','TÊN VẬT TƯ','NHÓM VẬT TƯ','ĐVT','SL CẦN','SL ĐÃ CẤP',
+            'LOẠI TIỀN','ĐƠN GIÁ','THÀNH TIỀN','NGÀY CẤP','NHÀ CUNG CẤP','MÃ BOQ',
+            'TÌNH TRẠNG CẤP','PHÊ DUYỆT','GHI CHÚ']];
+  ds.forEach(function(x){
+    var sl = slSo(x.qty), dg = slSo(x.price);
+    A.push([slChu(x.mrNo), slChu(x.seq), slChu(x.matName), slChu(x.group), slChu(x.unit),
+            sl, slSo(x.qtySupplied), slChu(x.cur || 'USD'), dg || '',
+            (sl && dg) ? Math.round(sl * dg * 100) / 100 : '',
+            slChu(x.reqDate), slChu(x.supplier), slChu(x.workCode),
+            slChu(x.supplyStatus), slChu(x.status), slChu(x.note)]);
+  });
+  return A;
+}
+
+/* ── Nút bấm ────────────────────────────────────────────────────────────── */
+async function slSaoLuuTemplate(){
+  if(typeof XLSX === 'undefined'){
+    if(window.showToast) showToast('⚠ Thư viện Excel chưa tải xong, đợi vài giây rồi bấm lại','r',5000);
+    return;
+  }
+  var ds = slDanhSachDuAn();
+  if(!ds.length){
+    if(window.showToast) showToast('⚠ Chưa có dự án nào để sao lưu','r',4000);
+    return;
+  }
+  if(typeof confirm === 'function' && !confirm(
+      'SAO LƯU RA TEMPLATE\n\n' +
+      'Sẽ tạo ' + ds.length + ' file Excel — mỗi dự án một file:\n  ' +
+      ds.join('\n  ') + '\n\n' +
+      'Tên file kèm ngày giờ nên KHÔNG ghi đè bản cũ.\n' +
+      'Trình duyệt có thể hỏi "cho phép tải nhiều file" — chọn Cho phép.\n\n' +
+      'Lưu ý: bản tải ở đây TRẮNG TRƠN (không màu nền, không viền ô) vì thư\n' +
+      'viện Excel trong trình duyệt không ghi được định dạng. Số liệu vẫn\n' +
+      'đúng và nạp ngược lại được. Muốn bản giữ nguyên định dạng công ty thì\n' +
+      'chạy 9-SAO-LUU-TEMPLATE.bat trên máy.')) return;
+
+  var moc = slMoc(), xong = 0, loi = [];
+  for(var i = 0; i < ds.length; i++){
+    var proj = ds[i];
+    try{
+      var wb = XLSX.utils.book_new();
+      var them = function(ten, A){
+        if(!A || !A.length) return;
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(A), ten);
+      };
+      them('BOQ_MASTER',           slBangBOQ(proj));
+      them('TỔNG THU',             slBangThu(proj));
+      them('CHI TIẾT THANH TOÁN',  slBangChi(proj));
+      them('AJC ĐÃ DUYỆT',         slBangAJC(proj));
+      them('NHÂN CÔNG THEO ĐỘI',   slBangNhanCong(proj));
+      them('TỒN KHO VẬT TƯ',       slBangTonKho(proj));
+      them('ĐỀ XUẤT VẬT TƯ',       slBangVatTu(proj));
+      if(!wb.SheetNames.length){ loi.push(proj + ' (chưa có dữ liệu)'); continue; }
+      XLSX.writeFile(wb, 'CBC_TEMPLATE_' + proj + '_' + moc + '.xlsx');
+      xong++;
+      /* Nghỉ một nhịp giữa các file: tải liên tiếp quá nhanh thì trình duyệt
+         bỏ bớt file mà không báo gì. */
+      await new Promise(function(r){ setTimeout(r, 700); });
+    }catch(e){
+      console.error('[sao lưu template] ' + proj, e);
+      loi.push(proj + ' (' + e.message + ')');
+    }
+  }
+  try{ if(typeof auditGhi === 'function') auditGhi('SAOLUU_TEMPLATE','tc','',{so:xong,moc:moc}); }catch(e){}
+  if(window.showToast){
+    if(xong) showToast('✅ Đã tải ' + xong + '/' + ds.length + ' template · mốc ' + moc
+                     + (loi.length ? (' · bỏ qua: ' + loi.join(', ')) : ''), 'g', 8000);
+    else showToast('❌ Không tạo được template nào: ' + loi.join(', '), 'r', 8000);
+  }
+}
+window.slSaoLuuTemplate = slSaoLuuTemplate;
 
 function exportDataJSON(){
   try{
@@ -10339,7 +10616,7 @@ function mrSave(){
 /* ═══════════════════════════════════════════════════════════════════════
    v24 · 16/09/2026 — SỐ BẢN HIỆN TRÊN MÀN HÌNH, VÀ ÉP LƯU KHI RỜI TRANG
    ═══════════════════════════════════════════════════════════════════════ */
-var APP_BAN = 'v26 · 16/09/2026';
+var APP_BAN = 'v27 · 17/09/2026';
 window.APP_BAN = APP_BAN;
 (function(){
   function dong(){
