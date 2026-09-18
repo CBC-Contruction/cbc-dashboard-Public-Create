@@ -10616,7 +10616,7 @@ function mrSave(){
 /* ═══════════════════════════════════════════════════════════════════════
    v24 · 16/09/2026 — SỐ BẢN HIỆN TRÊN MÀN HÌNH, VÀ ÉP LƯU KHI RỜI TRANG
    ═══════════════════════════════════════════════════════════════════════ */
-var APP_BAN = 'v28 · 17/09/2026';
+var APP_BAN = 'v29 · 18/09/2026';
 window.APP_BAN = APP_BAN;
 (function(){
   function dong(){
@@ -16318,13 +16318,14 @@ function p0TcChanMat(proj, pay, po, inst){
   if(pay  < g.pay  - (x.pay  || 0)) loi.push('khoan chi ' + g.pay  + ' -> ' + pay);
   if(po   < g.po   - (x.po   || 0)) loi.push('don hang '  + g.po   + ' -> ' + po);
   if(inst < g.inst - (x.inst || 0)) loi.push('dot thu '   + g.inst + ' -> ' + inst);
-  return loi.join('; ');
-  /* v15: in ra chinh ba con so de het doan. Chan hay khong deu in. */
+  /* v29: in ra chinh ba con so. Ban v15 dat cau nay SAU return nen chua bao
+     gio chay - moi lan chan la mot lan im lang, khong ai biet. */
   console.log('[P0-01] chot chan ' + proj +
     ' | luc nap  chi=' + g.pay + ' PO=' + g.po + ' thu=' + g.inst +
     ' | sap ghi  chi=' + pay   + ' PO=' + po   + ' thu=' + inst +
     ' | nguoi dung da xoa chi=' + (x.pay||0) + ' PO=' + (x.po||0) + ' thu=' + (x.inst||0) +
     ' | ket luan: ' + (loi.length ? 'CHAN' : 'cho ghi'));
+  return loi.join('; ');
 }
 window.p0TcChanMat = p0TcChanMat;
 
@@ -16420,6 +16421,13 @@ async function p0DongBoThuChi(){
       if(_hut){
         console.error('[P0-01] KHONG ghi ' + proj + ' — so dong bi hut: ' + _hut +
           '. Du lieu tren may chu GIU NGUYEN. Day la loi cua app, khong phai nguoi dung xoa.');
+        /* v29: phai NOI RA. Truoc day chi ghi vao console nen nguoi dung thay
+           man hinh dung so moi va tuong da luu xong - toi luc dang nhap lai
+           moi biet la khong. */
+        if(typeof showToast==='function')
+          showToast('KHONG LUU DUOC ' + proj + ' len may chu — so dong tut xuong ('
+            + _hut + '). May chu van giu so cu. Chup man hinh Console (F12) '
+            + 'roi bao lai.','r',20000);
         continue;
       }
       var kq = await _sbUpsert('thuchi_summary', sm, 'proj_code');
@@ -16440,6 +16448,11 @@ async function p0DongBoThuChi(){
         await _sbDelete('thuchi_installments', 'proj_code', proj);
         await _sbInsert('thuchi_installments', ins.map(function(x){ return p0TcDot(x, proj); }));
       }
+      /* v29: may chu vua nhan dung ngan ay dong -> lay lam moc moi va xoa so
+         da-xoa. Khong lam thi lan luu sau van do voi so dong luc dang nhap,
+         va khoan xoa cu bi tinh hai lan. */
+      _TC_SODONG[proj] = { pay: pays.length, po: pos.length, inst: ins.length };
+      _TC_CHOXOA[proj] = { pay: 0, po: 0, inst: 0 };
       _TC_DAGHI[proj] = ck;
       soDA++;
       chiTiet.push(proj + '(' + pays.length + ' chi/' + pos.length + ' PO/' + ins.length + ' thu)');
@@ -16684,6 +16697,12 @@ function tcDonChong(proj){
     var d = T[x.proj];
     if(x.boPo.length) d.poList = (d.poList || []).filter(function(r){ return x.boPo.indexOf(r) < 0; });
     if(x.boIn.length) d.inst   = (d.inst   || []).filter(function(r){ return x.boIn.indexOf(r) < 0; });
+    /* v29: khong co ba dong nay thi ban v28 don xong chi dep tren man hinh -
+       chot chan chan lenh ghi, dang nhap lai la so chong quay ve y nguyen. */
+    if(typeof p0TcGhiNhanXoa === 'function'){
+      if(x.boPo.length) p0TcGhiNhanXoa(x.proj,'po',  x.boPo.length);
+      if(x.boIn.length) p0TcGhiNhanXoa(x.proj,'inst',x.boIn.length);
+    }
     tong += x.boPo.length + x.boIn.length;
     try{ if(typeof tcRecalcAll === 'function') tcRecalcAll(d); }catch(e){}
     try{ if(typeof auditGhi === 'function') auditGhi('DON_GHI_CHONG','tc',x.proj,
@@ -17334,6 +17353,16 @@ function tcMergeInto(proj,o,cheDo){
       d.payments=(d.payments||[]).filter(function(x){ return TH.thua.indexOf(x)<0; });
       d.inst    =(d.inst    ||[]).filter(function(x){ return TH.thuaInst.indexOf(x)<0; });
       d.poList  =(d.poList  ||[]).filter(function(x){ return TH.thuaPo.indexOf(x)<0; });
+      /* v29: BAO CHO CHOT CHAN BIET. Day la lan giam CO Y - nguoi dung vua
+         bam OK "lay dung theo file". Khong bao thi p0TcChanMat thay so dong
+         tut xuong, tuong la app lam roi dong, va tu choi ghi ca du an: man
+         hinh dung so moi nhung may chu van giu so cu, dang nhap lai la quay
+         ve nhu cu. Do chinh la loi nguoi dung gap sau khi len v25. */
+      if(typeof p0TcGhiNhanXoa==='function'){
+        if(TH.thua.length)     p0TcGhiNhanXoa(proj,'pay', TH.thua.length);
+        if(TH.thuaInst.length) p0TcGhiNhanXoa(proj,'inst',TH.thuaInst.length);
+        if(TH.thuaPo.length)   p0TcGhiNhanXoa(proj,'po',  TH.thuaPo.length);
+      }
       st.boThua=TH.thuaHet.length; st.tienThua=TH.tien;
       if(typeof auditGhi==='function') auditGhi('NAP_THEO_FILE','tc',proj,
         {bo:TH.thuaHet.length, chi:TH.thua.length, dot:TH.thuaInst.length,
@@ -17448,6 +17477,8 @@ function tcDonSo(){
       // Chỉ bỏ khi ĐÚNG là dòng cộng: có chữ "tổng" ở đầu VÀ không có tiền thật
       return !(laTong && !(+x.goc));
     });
+    if(truoc>d.payments.length && typeof p0TcGhiNhanXoa==='function')
+      p0TcGhiNhanXoa(k,'pay',truoc-d.payments.length);        // v29
     boTong+=truoc-d.payments.length;
     if(typeof tcRecalcAll==='function') tcRecalcAll(d);
   });
