@@ -10616,7 +10616,7 @@ function mrSave(){
 /* ═══════════════════════════════════════════════════════════════════════
    v24 · 16/09/2026 — SỐ BẢN HIỆN TRÊN MÀN HÌNH, VÀ ÉP LƯU KHI RỜI TRANG
    ═══════════════════════════════════════════════════════════════════════ */
-var APP_BAN = 'v29 · 18/09/2026';
+var APP_BAN = 'v30 · 18/09/2026';
 window.APP_BAN = APP_BAN;
 (function(){
   function dong(){
@@ -17324,6 +17324,71 @@ window.tcSoThua=tcSoThua;
 /* Gộp cả sổ Thu/Chi. o = kết quả tcParseWB
    cheDo: 'hoi' (mặc định — hỏi khi phát hiện dòng thừa) · 'file' (lấy đúng
    theo file, bỏ dòng thừa) · 'gop' (giữ cả hai như trước). */
+/* ═══ v30 · 18/09/2026 — NẠP XONG PHẢI BIẾT CÓ BẰNG FILE KHÔNG ═══════════
+   Người dùng: "chi phí kế toán trả trong app khác với file chi tiết thanh
+   toán trong excel".
+
+   ĐO ĐƯỢC: app ĐỌC file đúng từng số — 121 dòng, 527.265,85, khớp đúng cột
+   TỔNG THANH TOÁN (USD) của chính file. Nạp xong cũng ra đúng số đó. Nhưng
+   CHỈ KHI bấm OK ở hộp thoại. Bấm Cancel là giữ cả hai bộ: 1.094.999,52.
+
+   Và hộp thoại cũ không hề nói bấm xong thì ra số bao nhiêu, nên không ai
+   chọn đúng được. Hai hàm dưới đây chữa chỗ đó: tính trước kết quả của cả
+   hai lựa chọn, và sau khi nạp thì đối chiếu lại với file rồi nói ra.     */
+function _tcTong(L){ return (L||[]).reduce(function(a,x){ return a+(+x.amt||0); },0); }
+function _tcTongDuyet(L){
+  return (L||[]).reduce(function(a,x){
+    return a + ((String(x.status||'').indexOf('Đã')>=0)?(+x.amt||0):0); },0);
+}
+function _tcManual(L){
+  return (L||[]).filter(function(x){ return String(x.src||'')==='man'; });
+}
+/* Hai kết quả có thể xảy ra, tính sẵn để đặt vào hộp thoại */
+function tcHaiKetQua(d,o,TH){
+  var F=function(x){ return (typeof tcFmt==='function')?tcFmt(x):String(x); };
+  var chiF=_tcTong(o.payments)+_tcTong(_tcManual(d.payments));
+  var thuF=_tcTong(o.inst)    +_tcTong(_tcManual(d.inst));
+  var hdF =(+o.baseContract||+d.baseContract||0)
+          + _tcTongDuyet(o.poList) + _tcTongDuyet(_tcManual(d.poList));
+  return { chiFile:F(chiF), chiHai:F(chiF+_tcTong(TH.thua)),
+           thuFile:F(thuF), thuHai:F(thuF+_tcTong(TH.thuaInst)),
+           hdFile :F(hdF),  hdHai :F(hdF +_tcTongDuyet(TH.thuaPo)) };
+}
+/* Nạp xong: so lại với chính file, rồi NÓI RA. Dòng nhập tay làm app lớn
+   hơn file là chuyện bình thường, nên trừ ra trước khi kêu. */
+function tcDoiChieuFile(proj,d,o){
+  var F=function(x){ return (typeof tcFmt==='function')?tcFmt(x):String(x); };
+  var muc=[
+    ['tổng chi',  _tcTong(d.payments), _tcTong(o.payments), _tcTong(_tcManual(d.payments))],
+    ['đã thu',    _tcTong(d.inst),     _tcTong(o.inst),     _tcTong(_tcManual(d.inst))],
+    ['hợp đồng',  +d.contract||0,
+                  (+o.contract||((+o.baseContract||0)+_tcTongDuyet(o.poList))),
+                  _tcTongDuyet(_tcManual(d.poList))]
+  ];
+  var lech=[];
+  try{
+    console.log('%c[nạp template] '+proj+' — app so với file','font-weight:700;color:#1565c0');
+    console.table(muc.map(function(m){
+      return { muc:m[0], app:m[1], file:m[2], 'dòng nhập tay':m[3],
+               'còn lệch':Math.round((m[1]-m[2]-m[3])*100)/100 };
+    }));
+  }catch(e){}
+  muc.forEach(function(m){
+    if(Math.abs(m[1]-m[2]-m[3])>0.02) lech.push(m[0]+' lệch '+F(m[1]-m[2]-m[3]));
+  });
+  if(lech.length){
+    if(typeof showToast==='function')
+      showToast('⚠ '+proj+': nạp xong vẫn KHÁC file — '+lech.join(' · ')+
+                '. Mở Console (F12) xem bảng đối chiếu.','a',15000);
+  }else{
+    if(typeof showToast==='function')
+      showToast('✓ '+proj+': số trong app nay đúng bằng file'+
+        (_tcTong(_tcManual(d.payments))?' (chưa kể dòng anh nhập tay)':''),'g',7000);
+  }
+  return lech;
+}
+window.tcHaiKetQua=tcHaiKetQua; window.tcDoiChieuFile=tcDoiChieuFile;
+
 function tcMergeInto(proj,o,cheDo){
   if(!proj||!o) return null;
   var d=tcEnsure(proj);
@@ -17337,16 +17402,30 @@ function tcMergeInto(proj,o,cheDo){
       if(TH.thua.length)     _ph.push(TH.thua.length+' khoản chi');
       if(TH.thuaInst.length) _ph.push(TH.thuaInst.length+' đợt thu');
       if(TH.thuaPo.length)   _ph.push(TH.thuaPo.length+' PO phát sinh');
+      /* v30: hộp thoại cũ chỉ nói BỎ BAO NHIÊU DÒNG, không nói bấm xong thì
+         RA SỐ BAO NHIÊU — nên không thể chọn đúng. Nay tính sẵn cả hai kết
+         quả và đặt cạnh nhau. Sau khi "lấy theo file" thì phần không phải
+         dòng nhập tay đúng bằng file, nên kết quả tính được chính xác. */
+      /* v30: bao boc. Loi trong phan GIAI THICH khong duoc phep giet ca lan
+         NAP - neu tinh khong ra thi hien dau '?' chu khong nem loi. */
+      var _c;
+      try{ _c=tcHaiKetQua(d,o,TH); }
+      catch(_eh){ console.warn('[nap template] khong tinh duoc so du bao:',_eh.message);
+        _c={chiFile:'?',chiHai:'?',thuFile:'?',thuHai:'?',hdFile:'?',hdHai:'?'}; }
       lay=(typeof confirm==='function'&&confirm(
         'NẠP TEMPLATE — '+proj+'\n\n'+
         'Trong sổ app có '+_ph.join(', ')+' KHÔNG có trong file,\n'+
         'tổng '+_t(TH.tien)+' USD.\n\n'+
-        'Thường là do những lần nạp trước cộng dồn lại: mỗi lần nạp một bản\n'+
-        'template mới, con số luỹ kế nhích lên một chút nên app tưởng là đợt\n'+
-        'thu mới và thêm dòng, thay vì thay dòng cũ.\n\n'+
+        'Thường là do những lần nạp trước cộng dồn lại, hoặc do file đã đổi\n'+
+        'cách ghi (ví dụ trước ghi LAK, nay kế toán ghi thẳng USD) nên app\n'+
+        'không ghép được dòng cũ với dòng mới.\n\n'+
+        '                        OK (theo file)      Cancel (giữ cả hai)\n'+
+        'tổng chi        '+_c.chiFile+'   '+_c.chiHai+'\n'+
+        'đã thu          '+_c.thuFile+'   '+_c.thuHai+'\n'+
+        'hợp đồng        '+_c.hdFile +'   '+_c.hdHai +'\n\n'+
         'OK      = LẤY ĐÚNG THEO FILE (bỏ '+TH.thuaHet.length+' dòng dư,\n'+
         '          dòng anh nhập tay trong app vẫn giữ nguyên)\n'+
-        'Cancel  = GIỮ CẢ HAI (như trước — số sẽ tiếp tục cộng dồn)'
+        'Cancel  = GIỮ CẢ HAI (số sẽ cộng dồn — hầu như luôn là sai)'
       ))?'file':'gop';
     }
     if(lay==='file'){
@@ -17384,6 +17463,9 @@ function tcMergeInto(proj,o,cheDo){
   if(o.costByPO) d.costByPO=o.costByPO;
   if(o.costCols) d.costCols=o.costCols;
   tcRecalcAll(d);
+  /* v30: nạp xong thì đối chiếu ngay với file và nói ra. Trước đây app im,
+     nên lệch bao nhiêu cũng phải vài tuần sau mới có người phát hiện. */
+  try{ st.lech=tcDoiChieuFile(proj,d,o); }catch(_e){}
   return st;
 }
 /* Câu thông báo cho anh biết đã gộp ra sao */
