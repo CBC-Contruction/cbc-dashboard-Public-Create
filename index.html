@@ -1327,67 +1327,147 @@ function renderCEOExecutiveView(){
   }
   
   var projs = typeof PROJECTS !== 'undefined' ? PROJECTS : [];
-  var totalBud = 0, totalAct = 0, totalRev = 0, totalCol = 0;
-  
-  projs.forEach(function(p){
-    totalBud += (p.budget || 0);
-    totalAct += (p.actual || 0);
-  });
-  
   var T = window.THUCHI || {};
-  Object.keys(T).forEach(function(k){
-    var d = T[k];
-    if(d){
-      totalRev += (Number(d.contract) || 0) + (Number(d.poApproved) || 0);
-      totalCol += (Number(d.collected) || 0);
-    }
+  var _V = (typeof V === 'function') ? V : function(x){ return String(x); };
+
+  /* ═══ v31 · 21/09/2026 — CEO VIEW LẤY SỐ TỪ ĐÚNG NGUỒN CỦA THẺ DỰ ÁN ═══
+     Yêu cầu: CEO View hiện đủ nội dung như thẻ ở Tổng quan để nhìn được
+     tổng thể. Nhưng trước khi thêm cột phải sửa hai chỗ lấy số sai, không
+     thì thêm bao nhiêu cột là thêm bấy nhiêu số sai:
+
+       ① p.actual chỉ được GÁN lúc VẼ thẻ ở Module 01. Giám đốc mở thẳng
+          CEO View thì p.actual là số cũ đọc từ máy chủ, hoặc 0 — đúng họ
+          hàng với lỗi p.progress mà v22 đã phải sửa.
+       ② totalRev cộng d.contract + d.poApproved, mà d.contract ĐÃ GỒM
+          poApproved rồi (xem tcRecalcAll) -> PO bị tính HAI LẦN trong
+          "TỔNG GIÁ TRỊ HỢP ĐỒNG".
+
+     Nay mọi con số đều lấy từ CHÍNH hai hàm mà thẻ dự án dùng: projCost()
+     và accRevenue(). Cộng dồn từ đúng những dòng đang hiện trong bảng, nên
+     dòng TỔNG luôn bằng tổng các dòng, và CEO View không thể nói khác
+     Module 01.                                                            */
+  var _Z = {accPaid:0,accPend:0,site:0,siteMatOnly:0,siteLab:0,siteMach:0,
+            unpaid:0,total:0,nPaid:0,nPend:0};
+  var hang = projs.map(function(p){
+    var PC = (typeof projCost==='function') ? projCost(p.code) : _Z;
+    var PR = (typeof accRevenue==='function') ? accRevenue(p.code)
+                                              : {contract:0,collected:0,remain:0,inst:[]};
+    /* Chưa có ngân sách riêng thì lấy tổng chi kế hoạch bên Thu/Chi — y như
+       thẻ dự án làm, để hai nơi không lệch nhau. */
+    var bud = +p.budget || 0;
+    if(!bud){ var _b = T[p.code]; if(_b && +_b.total > 0) bud = +_b.total; }
+    var tx = (typeof LIVE_TX!=='undefined'?LIVE_TX:[]).filter(function(t){ return t.proj===p.code; }).length;
+    return { p:p, PC:PC, PR:PR, bud:bud, tx:tx,
+             pct: bud>0 ? (PC.total/bud*100) : 0 };
   });
 
+  var T0 = {bud:0, accPaid:0, accPend:0, site:0, unpaid:0, chi:0,
+            hd:0, thu:0, con:0, tx:0, nPaid:0};
+  hang.forEach(function(r){
+    T0.bud+=r.bud; T0.accPaid+=r.PC.accPaid; T0.accPend+=r.PC.accPend;
+    T0.site+=r.PC.site; T0.unpaid+=r.PC.unpaid; T0.chi+=r.PC.total;
+    T0.hd+=r.PR.contract; T0.thu+=r.PR.collected; T0.con+=r.PR.remain;
+    T0.tx+=r.tx; T0.nPaid+=(r.PC.nPaid||0);
+  });
+  var totalBud=T0.bud, totalAct=T0.chi, totalRev=T0.hd, totalCol=T0.thu;
+  var rong = T0.thu - T0.accPaid;                       // dòng tiền ròng
   var expProfit = totalRev - totalBud;
   var profitPct = totalRev > 0 ? (expProfit / totalRev * 100).toFixed(1) : '0';
   var burnRate = totalBud > 0 ? (totalAct / totalBud * 100).toFixed(1) : '0';
-  
+
+  /* Sổ Thu/Chi có dự án mà danh sách dự án không có -> tiền của nó không
+     nằm trong bảng dưới. Nói ra, đừng để nó biến mất lặng lẽ. */
+  var lac = Object.keys(T).filter(function(k){
+    return k && T[k] && !projs.some(function(p){ return p.code===k; }); });
+
   var h = '';
   h += '<div class="kg" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:18px">' +
-    '<div class="ceo-kpi-card"><div class="kl">TỔNG GIÁ TRỊ HỢP ĐỒNG</div><div class="kv" style="color:var(--c1)">' + (typeof V==='function'?V(totalRev):totalRev) + '</div><div class="ks">Doanh thu dự kiến bao gồm PO</div></div>' +
-    '<div class="ceo-kpi-card"><div class="kl">TỔNG NGÂN SÁCH (BUDGET)</div><div class="kv" style="color:var(--t1)">' + (typeof V==='function'?V(totalBud):totalBud) + '</div><div class="ks">Hạn mức chi phí toàn bộ dự án</div></div>' +
-    '<div class="ceo-kpi-card"><div class="kl">ĐÃ CHI THỰC TẾ (ACTUAL)</div><div class="kv ' + (Number(burnRate)>90?'r':'g') + '">' + (typeof V==='function'?V(totalAct):totalAct) + '</div><div class="ks">Đã tiêu hao ' + burnRate + '% ngân sách</div></div>' +
-    '<div class="ceo-kpi-card"><div class="kl">LỢI NHUẬN GỘP DỰ KIẾN</div><div class="kv ' + (expProfit>0?'g':'r') + '">' + (typeof V==='function'?V(expProfit):expProfit) + '</div><div class="ks">Biên lợi nhuận: ' + profitPct + '%</div></div>' +
-    '<div class="ceo-kpi-card"><div class="kl">TIỀN THU TỪ CHỦ ĐẦU TƯ</div><div class="kv" style="color:var(--c2)">' + (typeof V==='function'?V(totalCol):totalCol) + '</div><div class="ks">Đã thu: ' + (totalRev>0?(totalCol/totalRev*100).toFixed(1):0) + '% dòng tiền</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">TỔNG GIÁ TRỊ HỢP ĐỒNG</div><div class="kv" style="color:var(--c1)">' + _V(totalRev) + '</div><div class="ks">Hợp đồng gốc + PO đã duyệt</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">TỔNG NGÂN SÁCH (BUDGET)</div><div class="kv" style="color:var(--t1)">' + _V(totalBud) + '</div><div class="ks">Hạn mức chi phí toàn bộ dự án</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">Σ TỔNG CHI PHÍ</div><div class="kv ' + (Number(burnRate)>90?'r':'g') + '">' + _V(totalAct) + '</div><div class="ks">' + _V(T0.accPaid) + ' đã trả' + (T0.unpaid>0?(' + ' + _V(T0.unpaid) + ' chưa TT'):'') + ' · ' + burnRate + '% ngân sách</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">🏗 CÔNG TRƯỜNG (DỰ KIẾN)</div><div class="kv" style="color:var(--c5)">' + _V(T0.site) + '</div><div class="ks">Khối lượng đã phát sinh, chưa qua kế toán</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">LỢI NHUẬN GỘP DỰ KIẾN</div><div class="kv ' + (expProfit>0?'g':'r') + '">' + _V(expProfit) + '</div><div class="ks">Biên lợi nhuận: ' + profitPct + '%</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">TIỀN THU TỪ CHỦ ĐẦU TƯ</div><div class="kv" style="color:var(--c2)">' + _V(totalCol) + '</div><div class="ks">Đã thu: ' + (totalRev>0?(totalCol/totalRev*100).toFixed(1):0) + '% giá trị hợp đồng</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">CÒN PHẢI THU</div><div class="kv" style="color:var(--c3)">' + _V(T0.con) + '</div><div class="ks">Hợp đồng trừ đi số đã thu</div></div>' +
+    '<div class="ceo-kpi-card"><div class="kl">DÒNG TIỀN RÒNG (THU − CHI)</div><div class="kv ' + (rong>=0?'g':'r') + '">' + _V(rong) + '</div><div class="ks">' + (rong>=0?'Thu nhiều hơn số kế toán đã trả':'Công ty đang bù ' + _V(-rong)) + '</div></div>' +
     _ceoTheTienDo(projs) +
   '</div>';
 
-  h += '<div class="panel mb"><div class="pt">🚦 SỨC KHỎE DỰ ÁN (TRAFFIC LIGHT STATUS)</div>' +
-    '<div class="tw"><table style="width:100%">' +
-    '<thead><tr><th>Mã & Tên dự án</th><th>PM phụ trách</th><th>Hạn mức Ngân sách</th><th>Thực chi / % Tiêu</th><th>Dòng tiền Thu</th><th>Sức khỏe Chi phí</th><th>Tiến độ</th><th>Trạng thái</th></tr></thead><tbody>';
+  h += '<div class="panel mb"><div class="pt">🚦 TỔNG QUAN TỪNG DỰ ÁN · SỨC KHỎE CHI PHÍ &amp; DÒNG TIỀN</div>' +
+    '<div class="tw"><table style="width:100%;font-size:12px">' +
+    '<thead><tr>' +
+      '<th>Mã &amp; Tên dự án</th><th>PM</th><th style="text-align:right">Ngân sách</th>' +
+      '<th style="text-align:right">🧾 Kế toán đã chi</th>' +
+      '<th style="text-align:right">🏗 Công trường</th>' +
+      '<th style="text-align:right">Σ Tổng chi phí</th>' +
+      '<th style="text-align:right">💰 CĐT đã thanh toán</th>' +
+      '<th style="text-align:right">Còn phải thu</th>' +
+      '<th style="text-align:right">Thu − chi</th>' +
+      '<th style="text-align:right">Số GD</th>' +
+      '<th>Tiến độ</th><th>Sức khỏe Chi phí</th><th>Trạng thái</th>' +
+    '</tr></thead><tbody>';
 
-  projs.forEach(function(p){
-    var bud = p.budget || 0;
-    var act = p.actual || 0;
-    var col = (T[p.code] && Number(T[p.code].collected)) || 0;
-    var pct = bud > 0 ? (act / bud * 100) : 0;
-    
+  hang.forEach(function(r){
+    var p=r.p, PC=r.PC, PR=r.PR, pct=r.pct;
     var costTraffic = pct >= 95 ? '<span class="traffic-badge traffic-r">🔴 Nguy cấp ('+pct.toFixed(0)+'%)</span>' :
                       pct >= 80 ? '<span class="traffic-badge traffic-y">🟡 Cảnh báo ('+pct.toFixed(0)+'%)</span>' :
                       '<span class="traffic-badge traffic-g">🟢 Tốt ('+pct.toFixed(0)+'%)</span>';
-
     /* v22 — bản cũ đọc p.progress, trường không bao giờ được gán, nên mọi
        dự án đều đèn đỏ 0%. Nay lấy số thật, cả hai cách đo. */
     var schedTraffic = (typeof tienDoHaiDong === 'function') ? tienDoHaiDong(p.code, true) : '—';
+    var net = PR.collected - PC.accPaid;
+    var P2 = 'text-align:right;font-variant-numeric:tabular-nums';
+    var NH = 'font-size:10px;color:var(--t2);margin-top:2px';
 
     h += '<tr>' +
       '<td><b>' + esc(p.code) + '</b><br><span style="color:var(--t2);font-size:11px">' + esc(p.name) + '</span></td>' +
       '<td>' + esc(p.pm||'—') + '</td>' +
-      '<td style="font-weight:700">' + (typeof V==='function'?V(bud):bud) + '</td>' +
-      '<td>' + (typeof V==='function'?V(act):act) + ' (' + pct.toFixed(0) + '%)</td>' +
-      '<td style="color:var(--c2)">' + (typeof V==='function'?V(col):col) + '</td>' +
-      '<td>' + costTraffic + '</td>' +
+      '<td style="' + P2 + ';font-weight:700">' + (r.bud>0?_V(r.bud):'—') + '</td>' +
+      '<td style="' + P2 + '"><b style="color:var(--c1)">' + _V(PC.accPaid) + '</b>' +
+        '<div style="' + NH + '">' + (PC.nPaid||0) + ' khoản' + (PC.accPend>0?(' · chờ trả ' + _V(PC.accPend)):'') + '</div></td>' +
+      '<td style="' + P2 + '"><b style="color:var(--c5)">' + _V(PC.site) + '</b>' +
+        '<div style="' + NH + '">VT ' + _V(PC.siteMatOnly) + ' · NC ' + _V(PC.siteLab) +
+        (PC.siteMach>0?(' · MM ' + _V(PC.siteMach)):'') + '</div></td>' +
+      '<td style="' + P2 + '"><b style="color:' + (pct>90?'var(--c4)':pct>70?'var(--c3)':'var(--c2)') + '">' + _V(PC.total) + '</b>' +
+        '<div style="' + NH + '">' + pct.toFixed(0) + '% ngân sách' + (PC.unpaid>0?(' · ' + _V(PC.unpaid) + ' chưa TT'):'') + '</div></td>' +
+      '<td style="' + P2 + '"><b style="color:var(--c2)">' + _V(PR.collected) + '</b>' +
+        '<div style="' + NH + '">' + (PR.contract>0?((PR.collected/PR.contract*100).toFixed(1) + '% của HĐ ' + _V(PR.contract)):'chưa có hợp đồng') +
+        (PR.inst&&PR.inst.length?(' · ' + PR.inst.length + ' đợt'):'') + '</div></td>' +
+      '<td style="' + P2 + ';color:' + (PR.remain>0?'var(--c3)':'var(--t3)') + '">' + (PR.contract>0?_V(PR.remain):'—') + '</td>' +
+      '<td style="' + P2 + ';color:' + (net>=0?'var(--c2)':'var(--c4)') + '">' + _V(net) +
+        (net<0?'<div style="' + NH + '">đang bù</div>':'') + '</td>' +
+      '<td style="' + P2 + '">' + r.tx + '</td>' +
       '<td>' + schedTraffic + '</td>' +
+      '<td>' + costTraffic + '</td>' +
       '<td><span class="bx ' + (p.status==='active'?'bg':p.status==='progress'?'bb':'bgy') + '">' + esc(p.status) + '</span></td>' +
       '</tr>';
   });
 
-  h += '</tbody></table></div></div>';
+  /* Dòng TỔNG — đây chính là cái "nhìn được tổng thể". Cộng từ đúng những
+     dòng bên trên, không tính lại theo đường khác. */
+  var PT = 'text-align:right;font-variant-numeric:tabular-nums;font-weight:800';
+  var rongT = T0.thu - T0.accPaid;
+  h += '<tr style="background:rgba(56,189,248,.08);border-top:2px solid var(--bd)">' +
+    '<td style="font-weight:800">TỔNG ' + hang.length + ' DỰ ÁN</td><td>—</td>' +
+    '<td style="' + PT + '">' + _V(T0.bud) + '</td>' +
+    '<td style="' + PT + ';color:var(--c1)">' + _V(T0.accPaid) + '</td>' +
+    '<td style="' + PT + ';color:var(--c5)">' + _V(T0.site) + '</td>' +
+    '<td style="' + PT + '">' + _V(T0.chi) + '</td>' +
+    '<td style="' + PT + ';color:var(--c2)">' + _V(T0.thu) + '</td>' +
+    '<td style="' + PT + ';color:var(--c3)">' + _V(T0.con) + '</td>' +
+    '<td style="' + PT + ';color:' + (rongT>=0?'var(--c2)':'var(--c4)') + '">' + _V(rongT) + '</td>' +
+    '<td style="' + PT + '">' + T0.tx + '</td>' +
+    '<td colspan="3" style="font-size:11px;color:var(--t2)">Hợp đồng ' + _V(T0.hd) +
+      ' · đã thu ' + (T0.hd>0?(T0.thu/T0.hd*100).toFixed(1):'0') + '%' +
+      ' · chi ' + (T0.bud>0?(T0.chi/T0.bud*100).toFixed(0):'0') + '% ngân sách</td>' +
+    '</tr>';
+
+  h += '</tbody></table></div>';
+  if(lac.length) h += '<div style="padding:8px 14px;font-size:11px;color:var(--c3)">' +
+    '⚠ Sổ Thu/Chi còn ' + lac.length + ' mã không có trong danh sách dự án nên KHÔNG nằm trong bảng trên: <b>' +
+    esc(lac.join(', ')) + '</b></div>';
+  h += '</div>';
+
 
   // ── Hai biểu đồ tổng hợp cho giám đốc ──
   h += '<div class="ceo-charts">' +
@@ -10616,7 +10696,7 @@ function mrSave(){
 /* ═══════════════════════════════════════════════════════════════════════
    v24 · 16/09/2026 — SỐ BẢN HIỆN TRÊN MÀN HÌNH, VÀ ÉP LƯU KHI RỜI TRANG
    ═══════════════════════════════════════════════════════════════════════ */
-var APP_BAN = 'v30 · 18/09/2026';
+var APP_BAN = 'v31 · 21/09/2026';
 window.APP_BAN = APP_BAN;
 (function(){
   function dong(){
